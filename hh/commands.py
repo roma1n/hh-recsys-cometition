@@ -6,6 +6,7 @@ from hh import (
     data,
     dataset,
     dssm,
+    final,
     utils,
 )
 
@@ -72,9 +73,29 @@ class HeadHunter:
             'data/dssm_test_prediction.pq'
         )
 
-
     def train_dssm(self):
         dssm.train()
+    
+    def final_train_dataset(self):
+        utils.save_pq(
+            final.get_dataset(),
+            'data/final_train_dataset.pq'
+        )
+
+    def final_application_dataset(self):
+        utils.save_pq(
+            final.get_dataset(training=False),
+            'data/final_application_dataset.pq'
+        )
+
+    def final_train_catboost(self):
+        final.train_catboost()
+
+    def final_get_predictions(self):
+        utils.save_pq(
+            final.get_predictions(),
+            'data/catboost_predictions.pq'
+        )
 
 def main():
     fire.Fire(HeadHunter)

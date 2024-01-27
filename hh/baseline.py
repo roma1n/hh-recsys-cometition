@@ -47,66 +47,7 @@ def get_history_baseline():
 
 @utils.timeit
 def get_history_plus_dssm():
-    log = data.get_log().explode(
-        'action_dt',
-        'vacancy_id',
-        'action_type',
-    ).sort(
-        'action_dt',
-        descending=True,
-    )
-    likes = log.filter(
-        pl.col('action_type') == 3,
-    ).group_by(
-        'user_id',
-    ).agg(
-        pl.col('vacancy_id').alias('likes'),
-    )
-    views = log.filter(
-        pl.col('action_type') == 2,
-    ).group_by(
-        'user_id',
-    ).agg(
-        pl.col('vacancy_id').alias('views'),
-    )
-    applies = log.filter(
-        pl.col('action_type') == 1,
-    ).group_by(
-        'user_id',
-    ).agg(
-        pl.col('vacancy_id').alias('applies'),
-    )
-    dssm = pl.read_parquet('data/dssm_prediction.pq').select(
-        pl.col('user_id'),
-        pl.col('dssm'),
-    )
-    needed = data.get_test_hh().select(
-        pl.col('user_id')
-    ).unique()
-    res = needed.join(
-        likes,
-        on='user_id',
-        how='left',
-    ).join(
-        applies,
-        on='user_id',
-        how='left',
-    ).join(
-        views,
-        on='user_id',
-        how='left',
-    ).join(
-        dssm,
-        on='user_id',
-        how='left',
-    ).select(
-        pl.col('user_id'),
-        pl.col('likes').fill_null([]),
-        pl.col('applies').fill_null([]),
-        pl.col('views').fill_null([]),
-        pl.col('dssm').fill_null([]),
-    )
-    return res.select(
+    return candidates.get_application_candidates().select(
         pl.col('user_id'),
         pl.concat_list([
             pl.col('likes').list.set_difference('applies'),
