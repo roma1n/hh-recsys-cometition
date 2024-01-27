@@ -79,9 +79,9 @@ def get_likes():
 
 
 @utils.timeit
-def get_dssm():
+def get_dssm(training=False):
     return pl.read_parquet(
-        'data/dssm_prediction.pq'
+        'data/dssm_test_prediction.pq' if training else 'data/dssm_prediction.pq'
     )
 
 
@@ -126,7 +126,7 @@ def get_application_candidates(training=False):
     ).agg(
         pl.col('vacancy_id').alias('applies'),
     )
-    dssm = get_dssm().select(
+    dssm = get_dssm(training=training).select(
         pl.col('user_id'),
         pl.col('dssm'),
         pl.col('dssm_distances'),

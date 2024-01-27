@@ -370,7 +370,7 @@ def build_index(vacancy_embeddings):
 
 
 def get_predictions_by_index(p, user_embeddings, users_df):
-    labels, distances = p.knn_query(user_embeddings, k=200)
+    labels, distances = p.knn_query(user_embeddings, k=300)
     labels = np.char.add(np.str_("v_"), (labels - 1).astype(str))
     return pl.DataFrame().with_columns(
         users_df['user_id'],
@@ -391,7 +391,9 @@ def get_predictions(path='data/user_application_features.pq'):
         embed_x=EmbedMultipleVac(description=description),
         embed_y=EmbedSingleVac(description=description),
     )
-    users_df = pl.read_parquet(path)
+    users_df = pl.read_parquet(path).group_by('user_id').agg(
+        pl.col('vacancy_id').first(),
+    )
     return get_predictions_by_index(
         p=build_index(
             vacancy_embeddings=get_vacancy_embeddings(

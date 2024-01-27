@@ -82,7 +82,7 @@ def get_dataset(training=True):
         pl.col('user_id'),
         pl.col('dssm').alias('vacancy_id'),
         pl.col('dssm_distances').alias('score'),
-        pl.lit(list(range(200))).alias('score_pos'),
+        pl.lit(list(range(300))).alias('score_pos'),
     ).explode(
         'vacancy_id',
         'score',

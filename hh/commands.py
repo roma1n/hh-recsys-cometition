@@ -4,7 +4,6 @@ import polars as pl
 from hh import (
     baseline,
     data,
-    dataset,
     dssm,
     final,
     utils,
@@ -14,13 +13,6 @@ from hh import (
 class HeadHunter:
     def __init__(self):
         print ('Running hh')
-
-    def prepare_dataset(
-        self,
-        input_path='data/train.fth',
-        output_path='data/train_dataset.fth',
-    ):
-        dataset.get_dataset(input_path=input_path, output_path=output_path)
 
     def history_baseline(self):
         utils.save_pq(
@@ -64,12 +56,8 @@ class HeadHunter:
 
     def dssm_test_prediction(self):
         path = 'data/dssm_train.pq'
-        users_df = pl.read_parquet(path).with_row_index()
         utils.save_pq(
-            users_df.join(
-                dssm.get_predictions(path).with_row_index(),
-                on='index',
-            ),
+            dssm.get_predictions(path),
             'data/dssm_test_prediction.pq'
         )
 
