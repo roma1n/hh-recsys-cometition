@@ -1,12 +1,80 @@
 import fire
+import polars as pl
+
+from hh import (
+    baseline,
+    data,
+    dataset,
+    dssm,
+    utils,
+)
 
 
 class HeadHunter:
     def __init__(self):
         print ('Running hh')
 
-    def process_data(self):
-        print('Processing data')
+    def prepare_dataset(
+        self,
+        input_path='data/train.fth',
+        output_path='data/train_dataset.fth',
+    ):
+        dataset.get_dataset(input_path=input_path, output_path=output_path)
+
+    def history_baseline(self):
+        utils.save_pq(
+            baseline.get_history_baseline(),
+            'data/history_baseline.pq',
+        )
+
+    def history_plus_dssm(self):
+        utils.save_pq(
+            baseline.get_history_plus_dssm(),
+            'data/history_plus_dssm.pq',
+        )
+
+    def get_vacancy_features(self):
+        utils.save_pq(
+            data.get_vacancy_features(),
+            'data/vacancy_features.pq'
+        )
+
+    def dssm_train_dataset(self):
+        '''
+        Prepare dssm training dataset (no vacancy features).
+        Mathod: take last session for each users for targets, previous sessions are taket for features
+        '''
+        utils.save_pq(
+            data.get_train_dataset(),
+            'data/dssm_train.pq'
+        )
+
+    def user_application_features(self):
+        utils.save_pq(
+            data.get_application_features(),
+            'data/user_application_features.pq'
+        )
+
+    def dssm_prediction(self):
+        utils.save_pq(
+            dssm.get_predictions(),
+            'data/dssm_prediction.pq'
+        )
+
+    def dssm_test_prediction(self):
+        path = 'data/dssm_train.pq'
+        users_df = pl.read_parquet(path).with_row_index()
+        utils.save_pq(
+            users_df.join(
+                dssm.get_predictions(path).with_row_index(),
+                on='index',
+            ),
+            'data/dssm_test_prediction.pq'
+        )
+
+
+    def train_dssm(self):
+        dssm.train()
 
 def main():
     fire.Fire(HeadHunter)
