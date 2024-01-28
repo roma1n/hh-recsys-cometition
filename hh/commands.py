@@ -82,7 +82,7 @@ class HeadHunter:
     def final_get_predictions(self):
         utils.save_pq(
             final.get_predictions(),
-            'data/catboost_predictions.pq'
+            'data/catboost_predictions_v2.pq'
         )
 
 def main():

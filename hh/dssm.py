@@ -20,7 +20,7 @@ N_WORK_EXPERIENCE = 5
 N_COMPENSATION_CURRENCY_CODE = 11
 N_NAME = 18060
 
-EMBED_DIM = 64
+EMBED_DIM = 256
 VACANCY_ID_EMBED_DIM = 32
 COMPANY_ID_EMBED_DIM = 16
 AREA_ID_EMBED_DIM = 16
@@ -31,8 +31,8 @@ WORK_EXPERIENCE_EMBED_DIM = 4
 COMPENSATION_CURRENCY_CODE_EMBED_DIM = 4
 NAME_EMBED_DIM = 16
 
-LEARNING_RATE = 1e-4
-WEIGHT_DECAY = 1e-5
+LEARNING_RATE = 3e-5
+WEIGHT_DECAY = 1e-6
 N_EPOCH = 5
 BATCH_SIZE = 32
 
@@ -105,6 +105,11 @@ class EmbedSingleVac(nn.Module):
                 + COMPENSATION_CURRENCY_CODE_EMBED_DIM + NAME_EMBED_DIM,
             out_features=EMBED_DIM,
         )
+        self.relu = nn.ReLU()
+        self.fc_2 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_3 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_4 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_out = nn.Linear(4 * EMBED_DIM, EMBED_DIM)
 
     def forward(self, x):
         x = torch.cat([
@@ -119,7 +124,13 @@ class EmbedSingleVac(nn.Module):
             self.name(self.description.name[x]),
         ], dim=1)
         x = self.fc(x)
-        return x
+        y = self.relu(x)
+        y = self.fc_2(y)
+        z = self.relu(y)
+        z = self.fc_3(z)
+        p = self.relu(z)
+        p = self.fc_4(p)
+        return self.fc_out(torch.cat([x, y, z, p], dim=1))
 
 
 class EmbedMultipleVac(nn.Module):
@@ -170,6 +181,12 @@ class EmbedMultipleVac(nn.Module):
                 + COMPENSATION_CURRENCY_CODE_EMBED_DIM + NAME_EMBED_DIM,
             out_features=EMBED_DIM,
         )
+        self.relu = nn.ReLU()
+        self.fc_2 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_2 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_3 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_4 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_out = nn.Linear(4 * EMBED_DIM, EMBED_DIM)
 
     def forward(self, x):
         x = torch.cat([
@@ -184,7 +201,13 @@ class EmbedMultipleVac(nn.Module):
             self.name(self.description.name[x]),
         ], dim=1)
         x = self.fc(x)
-        return x
+        y = self.relu(x)
+        y = self.fc_2(y)
+        z = self.relu(y)
+        z = self.fc_3(z)
+        p = self.relu(z)
+        p = self.fc_4(p)
+        return self.fc_out(torch.cat([x, y, z, p], dim=1))
 
 
 class DSSM(li.LightningModule):
@@ -192,12 +215,10 @@ class DSSM(li.LightningModule):
         super().__init__()
         self.embed_x = embed_x
         self.embed_y = embed_y
-        self.dropout = nn.Dropout1d(p=0.2)
         self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, x, y):
         x = self.embed_x(x)
-        x = self.dropout(x)
         y = self.embed_y(y)
 
         return (x[:,None,:] * y[None,:,:]).sum(dim=2) # pairwise batch multiplication
@@ -216,10 +237,6 @@ class DSSM(li.LightningModule):
         batch_size = x.shape[0]
         logits = self.forward(x, y)
         loss = self.criterion(logits, torch.eye(batch_size))
-        # loss = (
-        #     self.criterion(logits, torch.eye(batch_size)) \
-        #         + self.criterion(logits.T, torch.eye(batch_size))
-        # ) / 2
         self.log(
             'train_loss',
             loss.item(),
@@ -327,7 +344,7 @@ def train():
             EarlyStopping(
                 monitor='val_loss',
                 min_delta=0.001,
-                patience=5,
+                patience=10,
             ),
         ],
     )
@@ -387,7 +404,7 @@ def get_predictions_by_index(p, user_embeddings, users_df):
 def get_predictions(path='data/user_application_features.pq'):
     description = VacancyDescription(path='data/vacancy_features.pq')
     dssm = DSSM.load_from_checkpoint(
-        'data/epoch=1-step=13269.ckpt',
+        'data/epoch=1-step=10369.ckpt',
         embed_x=EmbedMultipleVac(description=description),
         embed_y=EmbedSingleVac(description=description),
     )
