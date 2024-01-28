@@ -58,16 +58,21 @@ class VacancyDescription():
 
 
 class EmbedSingleVac(nn.Module):
-    def __init__(self, description):
+    def __init__(
+            self,
+            description,
+            vacancy_id_embed=None,
+            company_id=None,
+        ):
         super().__init__()
 
         self.description = description
 
-        self.vacancy_id_embed = nn.Embedding(
+        self.vacancy_id_embed = vacancy_id_embed or nn.EmbeddingBag(
             num_embeddings=N_VACANCY_ID,
             embedding_dim=VACANCY_ID_EMBED_DIM,
         )
-        self.company_id = nn.Embedding(
+        self.company_id = company_id or nn.EmbeddingBag(
             num_embeddings=N_COMPANY_ID,
             embedding_dim=COMPANY_ID_EMBED_DIM,
         )
@@ -113,8 +118,8 @@ class EmbedSingleVac(nn.Module):
 
     def forward(self, x):
         x = torch.cat([
-            self.vacancy_id_embed(x),
-            self.company_id(self.description.company_id[x]),
+            self.vacancy_id_embed(x.unsqueeze(1)),
+            self.company_id(self.description.company_id[x].unsqueeze(1)),
             self.area_id(self.description.area_id[x]),
             self.area_region_id(self.description.area_region_id[x]),
             self.work_schedule(self.description.work_schedule[x]),
@@ -134,16 +139,21 @@ class EmbedSingleVac(nn.Module):
 
 
 class EmbedMultipleVac(nn.Module):
-    def __init__(self, description):
+    def __init__(
+            self,
+            description,
+            vacancy_id_embed=None,
+            company_id=None,
+        ):
         super().__init__()
 
         self.description = description
 
-        self.vacancy_id_embed = nn.EmbeddingBag(
+        self.vacancy_id_embed = vacancy_id_embed or nn.EmbeddingBag(
             num_embeddings=N_VACANCY_ID,
             embedding_dim=VACANCY_ID_EMBED_DIM,
         )
-        self.company_id = nn.EmbeddingBag(
+        self.company_id = company_id or nn.EmbeddingBag(
             num_embeddings=N_COMPANY_ID,
             embedding_dim=COMPANY_ID_EMBED_DIM,
         )
@@ -348,9 +358,25 @@ def train():
             ),
         ],
     )
+    vacancy_id_embed = nn.EmbeddingBag(
+            num_embeddings=N_VACANCY_ID,
+            embedding_dim=VACANCY_ID_EMBED_DIM,
+        )
+    company_id = nn.EmbeddingBag(
+        num_embeddings=N_COMPANY_ID,
+        embedding_dim=COMPANY_ID_EMBED_DIM,
+    )
     dssm = DSSM(
-        embed_x=EmbedMultipleVac(description=description),
-        embed_y=EmbedSingleVac(description=description),
+        embed_x=EmbedMultipleVac(
+            description=description,
+            vacancy_id_embed=vacancy_id_embed,
+            company_id=company_id,
+        ),
+        embed_y=EmbedSingleVac(
+            description=description,
+            vacancy_id_embed=vacancy_id_embed,
+            company_id=company_id,
+        ),
     )
     datamodule = HeadHunterDataModule()
     trainer.fit(

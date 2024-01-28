@@ -38,3 +38,15 @@ hh history_plus_dssm
 hh final_application_dataset
 hh final_get_predictions
 ```
+
+
+### Пайплайн после dssm
+
+```bash
+hh dssm_prediction \
+    && hh dssm_test_prediction \
+    && hh final_train_dataset \
+    && hh final_application_dataset \
+    && hh final_train_catboost \
+    && hh final_get_predictions
+```
