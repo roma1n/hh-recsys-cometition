@@ -33,11 +33,21 @@ def get_vacancies_no_desc():
 
 
 @utils.timeit
-def get_log():
-    return pl.concat([
+def get_log(training=False):
+    log = pl.concat([
         get_train_hh(),
         get_test_hh(),
     ])
+    if training:
+        targets = pl.read_parquet('data/dssm_train.pq').select(
+            pl.col('session_id'),
+        ).unique()
+        log = log.join(
+            targets,
+            on='session_id',
+            how='anti',
+        )
+    return log
 
 
 @utils.timeit

@@ -87,17 +87,7 @@ def get_dssm(training=False):
 
 @utils.timeit
 def get_application_candidates(training=False):
-    log = data.get_log()
-    if training:
-        targets = pl.read_parquet('data/dssm_train.pq').select(
-            pl.col('session_id'),
-        ).unique()
-        log = log.join(
-            targets,
-            on='session_id',
-            how='anti',
-        )
-    log = log.explode(
+    log = data.get_log(training=training).explode(
         'action_dt',
         'vacancy_id',
         'action_type',
@@ -131,7 +121,7 @@ def get_application_candidates(training=False):
         pl.col('dssm'),
         pl.col('dssm_distances'),
     )
-    needed = data.get_log() if training else data.get_test_hh()
+    needed = data.get_log(training=training) if training else data.get_test_hh()
     needed = needed.select(
         pl.col('user_id')
     ).unique()

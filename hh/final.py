@@ -1,14 +1,25 @@
 import catboost
+import matplotlib.pyplot as plt
 import polars as pl
+import shap
 import tqdm
 
 from hh import (
     candidates,
+    data,
     utils,
 )
 
 
-float_features = [
+eq_features = [
+    'name',
+    'company.id',
+    'area.id',
+    'employment',
+    'workSchedule',
+    'workExperience',
+]
+float_features = list(map(lambda feature: f'eq_{feature}', eq_features)) + [
     'likes_count',
     'applies_count',
     'views_count',
@@ -17,6 +28,7 @@ float_features = [
     'views_back',
     'score',
     'score_pos',
+    'sessions_back',
     # 'compensation.from',
     # 'compensation.to',
 ]
@@ -111,6 +123,78 @@ def get_dataset(training=True):
         pl.col(['views_back']).fill_null(1000),
         pl.col(['score']).fill_null(10),
         pl.col(['score_pos']).fill_null(1000),
+    ).join(
+        data.get_vacancies_no_desc(),
+        on='vacancy_id',
+    )
+
+    print('Building flog')
+    flog = data.get_log(training=training).select(
+        'user_id',
+        'vacancy_id',
+    ).explode(
+        'vacancy_id',
+    ).join(
+        data.get_vacancies_no_desc(),
+        on='vacancy_id',
+    )
+    print('Calculating eqs')
+    eqs = [flog.group_by(
+        pl.col('user_id'),
+        pl.col(feature),
+    ).count().select(
+        pl.exclude('count'),
+        pl.col('count').alias(f'eq_{feature}')
+    ) for feature in eq_features]
+    print('Joining eq features')
+    for feature, eq in zip(eq_features, eqs):
+        dataset = dataset.join(
+            eq,
+            on=['user_id', feature],
+            how='left',
+        ).select(
+            pl.exclude(f'eq_{feature}'),
+            pl.col(f'eq_{feature}').fill_null(0),
+        )
+
+    print('Calculating sessions_back')
+    last_sessions = data.get_log(training=training).sort('session_end', descending=True).group_by(
+        'user_id'
+    ).agg(
+        pl.col('session_end'),
+        pl.cum_count().alias('sessions_back'),
+    ).select(
+        'user_id',
+        pl.col('session_end').list.head(10).alias('last_sessions'),
+        pl.col('sessions_back').list.head(10),
+    )
+    sessions_back = data.get_log(training=training).select(
+        'user_id',
+        'session_end',
+        'vacancy_id',
+    ).explode(
+        'vacancy_id',
+    ).join(
+        last_sessions,
+        on='user_id'
+    ).explode(
+        'sessions_back',
+        'last_sessions',
+    ).filter(
+        pl.col('session_end') == pl.col('last_sessions'),
+    ).group_by(
+        'user_id',
+        'vacancy_id'
+    ).agg(
+        pl.col('sessions_back').min(),
+    )
+    dataset = dataset.join(
+        sessions_back,
+        on=['user_id', 'vacancy_id'],
+        how='left',
+    ).select(
+        pl.exclude('sessions_back'),
+        pl.col('sessions_back').fill_null(20),
     )
 
     if training:
@@ -132,7 +216,7 @@ def get_dataset(training=True):
             ),
             dataset.filter(
                 pl.col('target') == 0
-            ).sample(fraction=0.01),
+            )#.sample(fraction=0.01),
         ])
         return sample
     return dataset
@@ -163,12 +247,12 @@ def train_catboost():
     )
     model = catboost.CatBoostRanker(
         n_estimators=1000,
-        eval_metric='NDCG',
+        eval_metric='MRR:top=100',
     )
     model.fit(
         X=train_pool,
         eval_set=test_pool,
-        verbose=100,
+        verbose=10,
         early_stopping_rounds=100,
     )
     model.save_model('data/model.cbm')
@@ -196,3 +280,19 @@ def get_predictions():
         pl.col('user_id'),
         pl.col('predictions').list.head(100),
     )
+
+
+def catboost_shap():
+    sample = pl.read_parquet('data/final_application_dataset.pq').head(10_000).to_pandas()
+    model = catboost.CatBoostRanker().load_model('data/model.cbm')
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(sample[ranker_features])
+
+    shap.summary_plot(
+        shap_values,
+        feature_names=ranker_features,
+        features=sample[ranker_features],
+        plot_size=(8, 12),
+        show=False,
+    )
+    plt.savefig('catboost_info/shap.png')
