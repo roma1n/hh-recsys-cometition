@@ -4,6 +4,7 @@ import polars as pl
 from hh import (
     baseline,
     data,
+    descriptions,
     dssm,
     final,
     utils,
@@ -51,7 +52,7 @@ class HeadHunter:
     def dssm_prediction(self):
         utils.save_pq(
             dssm.get_predictions(),
-            'data/dssm_prediction.pq'
+            'data/dssm_cosine_prediction.pq'
         )
 
     def dssm_test_prediction(self):
@@ -82,11 +83,14 @@ class HeadHunter:
     def final_get_predictions(self):
         utils.save_pq(
             final.get_predictions(),
-            'data/catboost_predictions_v3.pq'
+            'data/catboost_predictions_v6.pq'
         )
 
     def shap(self):
         final.catboost_shap()
+        
+    def calculate_descriptions(self):
+        descriptions.calculate()
 
 
 def main():

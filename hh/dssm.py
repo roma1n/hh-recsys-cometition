@@ -6,7 +6,10 @@ from pytorch_lightning.callbacks import EarlyStopping
 import torch
 from torch import nn
 
-from hh import utils
+from hh import (
+    data,
+    utils,
+)
 
 
 HISTORY_LENGTH = 64
@@ -21,6 +24,7 @@ N_COMPENSATION_CURRENCY_CODE = 11
 N_NAME = 18060
 
 EMBED_DIM = 256
+DESCRIPTION_EMBED_DIM = 312
 VACANCY_ID_EMBED_DIM = 32
 COMPANY_ID_EMBED_DIM = 16
 AREA_ID_EMBED_DIM = 16
@@ -31,10 +35,10 @@ WORK_EXPERIENCE_EMBED_DIM = 4
 COMPENSATION_CURRENCY_CODE_EMBED_DIM = 4
 NAME_EMBED_DIM = 16
 
-LEARNING_RATE = 3e-5
+LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-6
-N_EPOCH = 5
-BATCH_SIZE = 32
+N_EPOCH = 100
+BATCH_SIZE = 128
 
 NUM_WORKERS = 4
 
@@ -55,9 +59,30 @@ class VacancyDescription():
         self.name = torch.cat([torch.tensor([0]), torch.tensor(self.vacancies['name'].to_list())])
 
         self.name = self.name.clip(max=N_NAME - 1) # fix strange big names
+        
+        self.text = torch.zeros(N_VACANCY_ID, DESCRIPTION_EMBED_DIM, dtype=torch.float32)
+        text_np = np.load('data/vac_text.npz')['arr_0']
+        order = data.get_vacancies().select(
+            pl.col('vacancy_id').str.slice(2).cast(pl.UInt64).add(1),
+        ).to_pandas()['vacancy_id'].tolist()
+        self.text[order] = torch.tensor(text_np)
 
 
 class EmbedSingleVac(nn.Module):
+    @staticmethod
+    def _get_fc_block(
+        in_features,
+        out_features,
+    ):
+        return nn.Sequential(
+            nn.Linear(in_features, out_features),
+            nn.Dropout1d(p=0.2),
+            nn.ReLU(),
+            nn.Linear(out_features, out_features),
+            nn.ReLU(),
+            nn.Dropout1d(p=0.2),
+        )
+    
     def __init__(
             self,
             description,
@@ -104,21 +129,20 @@ class EmbedSingleVac(nn.Module):
             num_embeddings=N_NAME,
             embedding_dim=NAME_EMBED_DIM,
         )
-        self.fc = nn.Linear(
+        self.fc = self._get_fc_block(
             in_features=VACANCY_ID_EMBED_DIM + COMPANY_ID_EMBED_DIM + AREA_ID_EMBED_DIM + AREA_REGION_ID_EMBED_DIM \
                 + EMPLOYMENT_EMBED_DIM + WORK_SCHEDULE_EMBED_DIM + WORK_EXPERIENCE_EMBED_DIM \
-                + COMPENSATION_CURRENCY_CODE_EMBED_DIM + NAME_EMBED_DIM,
+                + COMPENSATION_CURRENCY_CODE_EMBED_DIM + NAME_EMBED_DIM + DESCRIPTION_EMBED_DIM,
             out_features=EMBED_DIM,
         )
-        self.relu = nn.ReLU()
-        self.fc_2 = nn.Linear(EMBED_DIM, EMBED_DIM)
-        self.fc_3 = nn.Linear(EMBED_DIM, EMBED_DIM)
-        self.fc_4 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_2 = self._get_fc_block(EMBED_DIM, EMBED_DIM)
+        self.fc_3 = self._get_fc_block(EMBED_DIM, EMBED_DIM)
+        self.fc_4 = self._get_fc_block(EMBED_DIM, EMBED_DIM)
         self.fc_out = nn.Linear(4 * EMBED_DIM, EMBED_DIM)
 
     def forward(self, x):
         x = torch.cat([
-            self.vacancy_id_embed(x.unsqueeze(1)),
+            0 * self.vacancy_id_embed(x.unsqueeze(1)),
             self.company_id(self.description.company_id[x].unsqueeze(1)),
             self.area_id(self.description.area_id[x]),
             self.area_region_id(self.description.area_region_id[x]),
@@ -127,18 +151,28 @@ class EmbedSingleVac(nn.Module):
             self.work_experience(self.description.work_experience[x]),
             self.compensation_currency_code(self.description.compensation_currency_code[x]),
             self.name(self.description.name[x]),
+            self.description.text[x],
         ], dim=1)
         x = self.fc(x)
-        y = self.relu(x)
-        y = self.fc_2(y)
-        z = self.relu(y)
-        z = self.fc_3(z)
-        p = self.relu(z)
-        p = self.fc_4(p)
+        y = self.fc_2(x)
+        z = self.fc_3(y)
+        p = self.fc_4(z)
         return self.fc_out(torch.cat([x, y, z, p], dim=1))
 
 
 class EmbedMultipleVac(nn.Module):
+    @staticmethod
+    def _get_fc_block(
+        in_features,
+        out_features,
+    ):
+        return nn.Sequential(
+            nn.Linear(in_features, out_features),
+            nn.ReLU(),
+            nn.Linear(out_features, out_features),
+            nn.ReLU(),
+        )
+    
     def __init__(
             self,
             description,
@@ -185,22 +219,20 @@ class EmbedMultipleVac(nn.Module):
             num_embeddings=N_NAME,
             embedding_dim=NAME_EMBED_DIM,
         )
-        self.fc = nn.Linear(
+        self.fc = self._get_fc_block(
             in_features=VACANCY_ID_EMBED_DIM + COMPANY_ID_EMBED_DIM + AREA_ID_EMBED_DIM + AREA_REGION_ID_EMBED_DIM \
                 + EMPLOYMENT_EMBED_DIM + WORK_SCHEDULE_EMBED_DIM + WORK_EXPERIENCE_EMBED_DIM \
-                + COMPENSATION_CURRENCY_CODE_EMBED_DIM + NAME_EMBED_DIM,
+                + COMPENSATION_CURRENCY_CODE_EMBED_DIM + NAME_EMBED_DIM + DESCRIPTION_EMBED_DIM,
             out_features=EMBED_DIM,
         )
-        self.relu = nn.ReLU()
-        self.fc_2 = nn.Linear(EMBED_DIM, EMBED_DIM)
-        self.fc_2 = nn.Linear(EMBED_DIM, EMBED_DIM)
-        self.fc_3 = nn.Linear(EMBED_DIM, EMBED_DIM)
-        self.fc_4 = nn.Linear(EMBED_DIM, EMBED_DIM)
+        self.fc_2 = self._get_fc_block(EMBED_DIM, EMBED_DIM)
+        self.fc_3 = self._get_fc_block(EMBED_DIM, EMBED_DIM)
+        self.fc_4 = self._get_fc_block(EMBED_DIM, EMBED_DIM)
         self.fc_out = nn.Linear(4 * EMBED_DIM, EMBED_DIM)
 
     def forward(self, x):
         x = torch.cat([
-            self.vacancy_id_embed(x),
+            0 * self.vacancy_id_embed(x),
             self.company_id(self.description.company_id[x]),
             self.area_id(self.description.area_id[x]),
             self.area_region_id(self.description.area_region_id[x]),
@@ -209,14 +241,12 @@ class EmbedMultipleVac(nn.Module):
             self.work_experience(self.description.work_experience[x]),
             self.compensation_currency_code(self.description.compensation_currency_code[x]),
             self.name(self.description.name[x]),
+            self.description.text[x].mean(dim=1),
         ], dim=1)
         x = self.fc(x)
-        y = self.relu(x)
-        y = self.fc_2(y)
-        z = self.relu(y)
-        z = self.fc_3(z)
-        p = self.relu(z)
-        p = self.fc_4(p)
+        y = self.fc_2(x)
+        z = self.fc_3(y)
+        p = self.fc_4(z)
         return self.fc_out(torch.cat([x, y, z, p], dim=1))
 
 
@@ -354,28 +384,28 @@ def train():
             EarlyStopping(
                 monitor='val_loss',
                 min_delta=0.001,
-                patience=10,
+                patience=100,
             ),
         ],
     )
-    vacancy_id_embed = nn.EmbeddingBag(
-            num_embeddings=N_VACANCY_ID,
-            embedding_dim=VACANCY_ID_EMBED_DIM,
-        )
-    company_id = nn.EmbeddingBag(
-        num_embeddings=N_COMPANY_ID,
-        embedding_dim=COMPANY_ID_EMBED_DIM,
-    )
+    # vacancy_id_embed = nn.EmbeddingBag(
+    #         num_embeddings=N_VACANCY_ID,
+    #         embedding_dim=VACANCY_ID_EMBED_DIM,
+    #     )
+    # company_id = nn.EmbeddingBag(
+    #     num_embeddings=N_COMPANY_ID,
+    #     embedding_dim=COMPANY_ID_EMBED_DIM,
+    # )
     dssm = DSSM(
         embed_x=EmbedMultipleVac(
             description=description,
-            vacancy_id_embed=vacancy_id_embed,
-            company_id=company_id,
+            # vacancy_id_embed=vacancy_id_embed,
+            # company_id=company_id,
         ),
         embed_y=EmbedSingleVac(
             description=description,
-            vacancy_id_embed=vacancy_id_embed,
-            company_id=company_id,
+            # vacancy_id_embed=vacancy_id_embed,
+            # company_id=company_id,
         ),
     )
     datamodule = HeadHunterDataModule()
@@ -400,14 +430,19 @@ def get_user_embeddings(dssm, users_df):
 
 
 def build_index(vacancy_embeddings):
-    train = pl.read_parquet('data/dssm_train.pq')
-    targets = np.array(train['target'].to_list())
+    # train = pl.read_parquet('data/dssm_train.pq')
+    # targets = np.array(train['target'].to_list() + train['vacancy_id'].explode().to_list())
 
-    # Drop targets that had low occurency while training
-    ts, cs = np.unique(targets, return_counts=True)
-    goodts = ts[cs >= 2]
-    p = hnswlib.Index(space='ip', dim=EMBED_DIM)
-    p.init_index(max_elements=goodts.shape[0], ef_construction=400, M=16)
+    # # Drop targets that had low occurency while training
+    # goodts = np.unique(targets)
+    
+    goodts = np.arange(1, N_VACANCY_ID)
+    p = hnswlib.Index(
+        # space='ip',
+        space='cosine',
+        dim=EMBED_DIM,
+    )
+    p.init_index(max_elements=goodts.shape[0], ef_construction=1000, M=64)
     p.add_items(vacancy_embeddings[goodts], goodts)
     return p
 
@@ -429,23 +464,29 @@ def get_predictions_by_index(p, user_embeddings, users_df):
 @utils.timeit
 def get_predictions(path='data/user_application_features.pq'):
     description = VacancyDescription(path='data/vacancy_features.pq')
+    # dssm = DSSM(
+    #     embed_x=EmbedMultipleVac(description=description),
+    #     embed_y=EmbedSingleVac(description=description),
+    # )
     dssm = DSSM.load_from_checkpoint(
-        'data/epoch=1-step=10369.ckpt',
+        'data/epoch=60-step=44600.ckpt',
         embed_x=EmbedMultipleVac(description=description),
         embed_y=EmbedSingleVac(description=description),
     )
+    dssm.train(False)
     users_df = pl.read_parquet(path).group_by('user_id').agg(
         pl.col('vacancy_id').first(),
     )
-    return get_predictions_by_index(
-        p=build_index(
-            vacancy_embeddings=get_vacancy_embeddings(
-                dssm=dssm,
+    with torch.no_grad():
+        return get_predictions_by_index(
+            p=build_index(
+                vacancy_embeddings=get_vacancy_embeddings(
+                    dssm=dssm,
+                ),
             ),
-        ),
-        user_embeddings=get_user_embeddings(
-            dssm=dssm,
+            user_embeddings=get_user_embeddings(
+                dssm=dssm,
+                users_df=users_df,
+            ),
             users_df=users_df,
-        ),
-        users_df=users_df,
-    )
+        )

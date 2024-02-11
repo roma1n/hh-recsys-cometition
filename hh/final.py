@@ -1,4 +1,5 @@
 import catboost
+import datetime
 import matplotlib.pyplot as plt
 import polars as pl
 import shap
@@ -29,6 +30,13 @@ float_features = list(map(lambda feature: f'eq_{feature}', eq_features)) + [
     'score',
     'score_pos',
     'sessions_back',
+    'vacancy_actions',
+    'vacancy_actions_last_day',
+    'vacancy_actions_last_day_share',
+    'vacancy_since_action',
+    'vacancy_action_1',
+    'vacancy_action_2',
+    'vacancy_action_3',
     # 'compensation.from',
     # 'compensation.to',
 ]
@@ -49,22 +57,41 @@ ranker_features = float_features + cat_features
 @utils.timeit
 def precalculate_dataset(training=True):
     if training:
-        targets = pl.read_parquet('data/dssm_train.pq').select(
+        targets =  data.get_log().select(
             pl.col('user_id'),
-            pl.concat_str([pl.lit('v_'), pl.col('target').sub(1).cast(pl.String)]).alias('target'),
-            pl.col('is_test'),
+            pl.col('vacancy_id'),
+            pl.col('action_type'),
+            pl.col('session_end'),
+        ).groupby(
+            'user_id',
+        ).agg(
+            pl.all().sort_by('session_end').last(),
+            pl.count(),
+        ).filter(
+            pl.col('count') > 1,
+        ).explode(
+            ['vacancy_id', 'action_type'],
+        ).filter(
+            pl.col('action_type') == 1,
         ).group_by(
             'user_id',
-            'is_test',
         ).agg(
+            pl.col('vacancy_id').alias('target'),
+            pl.col('session_end').first(),
+        ).select(
+            pl.col('user_id'),
             pl.col('target'),
+            pl.col('session_end').cast(pl.Date).alias('dt'),
+            pl.col('user_id').str.slice(2).cast(pl.UInt64).mod(7).eq(0).alias('is_test'),
         )
         dataset = targets.join(
             candidates.get_application_candidates(training=training),
             on='user_id',
         )
         return dataset
-    return candidates.get_application_candidates(training=training)
+    return candidates.get_application_candidates(training=training).with_columns(
+        dt=pl.lit(datetime.date(year=2023, month=11, day=22))
+    )
 
 
 @utils.timeit
@@ -126,6 +153,51 @@ def get_dataset(training=True):
     ).join(
         data.get_vacancies_no_desc(),
         on='vacancy_id',
+    ).join(
+        pre_dataset.select(
+            'user_id',
+            'dt',
+        ),
+        on='user_id',
+    )
+
+    print('Joining vacancy action features')
+    vacancy_action_features = dataset.select(
+        pl.col('dt').alias('dataset_dt'),
+        'vacancy_id',
+    ).unique().join(
+        data.vacancy_action_stats(),
+        on='vacancy_id',
+    ).filter(
+        pl.col('dt') < pl.col('dataset_dt')  # stats before dataset row
+    ).sort('dt', descending=True).group_by(
+        'vacancy_id', 'dataset_dt'
+    ).first().select(
+        pl.exclude(['dt', 'dataset_dt']),
+        pl.col('dataset_dt').alias('dt'),
+        pl.col('dataset_dt').sub(pl.col('dt')).dt.total_days().alias('vacancy_since_action'),
+    )
+    dataset = dataset.join(
+        vacancy_action_features,
+        on=['vacancy_id', 'dt'],
+        how='left',
+    ).select(
+        pl.exclude([
+            'vacancy_actions',
+            'vacancy_actions_last_day',
+            'vacancy_actions_last_day_share',
+            'vacancy_since_action',
+            'vacancy_action_1',
+            'vacancy_action_2',
+            'vacancy_action_3',
+        ]),
+        pl.col('vacancy_actions').fill_null(0),
+        pl.col('vacancy_actions_last_day').fill_null(0),
+        pl.col('vacancy_actions_last_day_share').fill_null(1),
+        pl.col('vacancy_since_action').fill_null(30),
+        pl.col('vacancy_action_1').fill_null(0),
+        pl.col('vacancy_action_2').fill_null(0),
+        pl.col('vacancy_action_3').fill_null(0),
     )
 
     print('Building flog')
@@ -216,14 +288,16 @@ def get_dataset(training=True):
             ),
             dataset.filter(
                 pl.col('target') == 0
-            )#.sample(fraction=0.01),
+            ).sample(fraction=0.1),
         ])
         return sample
     return dataset
 
 
 def train_catboost():
-    sample = pl.read_parquet('data/final_train_dataset.pq')
+    sample = pl.read_parquet('data/final_train_dataset.pq').with_columns(
+        ts=pl.col('dt').dt.timestamp()
+    )
     df = sample.to_pandas()
 
     df[cat_features] = df[cat_features].astype(str)
@@ -238,12 +312,14 @@ def train_catboost():
         label=train['target'],
         cat_features=cat_features,
         group_id=train['user_id'],
+        timestamp=train['ts'],
     )
     test_pool = catboost.Pool(
         data=test[ranker_features],
         label=test['target'],
         cat_features=cat_features,
         group_id=test['user_id'],
+         timestamp=test['ts'],
     )
     model = catboost.CatBoostRanker(
         n_estimators=1000,

@@ -66,9 +66,12 @@ def get_targets():
         ['vacancy_id', 'action_type'],
     ).filter(
         pl.col('action_type') == 1,
-    ).select(
-        pl.exclude('action_type', 'vacancy_id'),
-        pl.col('vacancy_id').str.slice(2).cast(pl.UInt64).alias('target').add(1),
+    ).group_by(
+        'user_id',
+    ).agg(
+        pl.col('vacancy_id').first().str.slice(2).cast(pl.UInt64).alias('target').add(1),
+        pl.col('session_id').first(),
+        pl.col('session_end').first(),
     )
 
 
@@ -184,3 +187,66 @@ def get_vacancy_features():
         }, return_dtype=pl.UInt64),
         get_vacancies_no_desc()['name'].replace(name_mapping, return_dtype=pl.UInt64).fill_null(1),
     ).sort('vacancy_id')
+
+
+@utils.timeit
+def get_deleted_vacancies():  # DON'T use, works bad
+    log = get_log(
+        training=False, # dont use closed vacancies even in training
+    ).select(
+        'vacancy_id',
+        'action_dt',
+    ).explode(
+        'vacancy_id',
+        'action_dt',
+    ).group_by(
+        'vacancy_id'
+    ).agg(
+        pl.col('action_dt').cast(pl.Date).max(),
+        pl.count().alias('n_action'),
+    )
+    last_log_dt = log['action_dt'].max()
+    return log.filter(
+        (
+            pl.col('n_action') > 95  # at most 1% probability for random absence last date
+        ) & (
+            pl.col('action_dt') != last_log_dt
+        ),
+    )
+
+
+@utils.timeit
+def vacancy_action_stats():
+    return get_log().select(  # always use full log
+        'vacancy_id',
+        'action_type',
+        pl.col('action_dt').alias('dt'),
+    ).explode(
+        'vacancy_id',
+        'action_type',
+        'dt',
+    ).select(
+        'vacancy_id',
+        pl.col('action_type').cast(pl.String),
+        pl.col('dt').cast(pl.Date),
+    ).pivot(
+        index=[
+            'vacancy_id',
+            'dt',
+        ],
+        values=['action_type'],
+        columns=['action_type'],
+        aggregate_function='count',
+    ).select(
+        pl.all(),
+        pl.col('1').add(pl.col('2')).add(pl.col('3')).alias('count'),
+    ).sort('dt').select(
+        pl.col('vacancy_id'),
+        pl.col('dt'),
+        pl.col('1').cum_sum().over('vacancy_id').alias('vacancy_action_1'),
+        pl.col('2').cum_sum().over('vacancy_id').alias('vacancy_action_2'),
+        pl.col('3').cum_sum().over('vacancy_id').alias('vacancy_action_3'),
+        pl.col('count').cum_sum().over('vacancy_id').alias('vacancy_actions'),
+        pl.col('count').alias('vacancy_actions_last_day'),
+        (pl.col('count') / pl.col('count').cum_sum().over('vacancy_id')).alias('vacancy_actions_last_day_share'),
+    ).sort('vacancy_id', 'dt')
