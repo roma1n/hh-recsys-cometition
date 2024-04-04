@@ -1,7 +1,7 @@
 import hnswlib
 import numpy as np
 import polars as pl
-import pytorch_lightning as li 
+import pytorch_lightning as li
 from pytorch_lightning.callbacks import EarlyStopping
 import torch
 from torch import nn
@@ -25,9 +25,9 @@ N_NAME = 18060
 
 EMBED_DIM = 256
 DESCRIPTION_EMBED_DIM = 312
-VACANCY_ID_EMBED_DIM = 32
+VACANCY_ID_EMBED_DIM = 0
 COMPANY_ID_EMBED_DIM = 16
-AREA_ID_EMBED_DIM = 16
+AREA_ID_EMBED_DIM = 32
 AREA_REGION_ID_EMBED_DIM = 8
 EMPLOYMENT_EMBED_DIM = 4
 WORK_SCHEDULE_EMBED_DIM = 4
@@ -40,7 +40,7 @@ WEIGHT_DECAY = 1e-6
 N_EPOCH = 100
 BATCH_SIZE = 128
 
-NUM_WORKERS = 4
+NUM_WORKERS = 16
 
 
 class VacancyDescription():
@@ -59,7 +59,7 @@ class VacancyDescription():
         self.name = torch.cat([torch.tensor([0]), torch.tensor(self.vacancies['name'].to_list())])
 
         self.name = self.name.clip(max=N_NAME - 1) # fix strange big names
-        
+
         self.text = torch.zeros(N_VACANCY_ID, DESCRIPTION_EMBED_DIM, dtype=torch.float32)
         text_np = np.load('data/vac_text.npz')['arr_0']
         order = data.get_vacancies().select(
@@ -82,21 +82,15 @@ class EmbedSingleVac(nn.Module):
             nn.ReLU(),
             nn.Dropout1d(p=0.2),
         )
-    
+
     def __init__(
             self,
             description,
-            vacancy_id_embed=None,
             company_id=None,
         ):
         super().__init__()
 
         self.description = description
-
-        self.vacancy_id_embed = vacancy_id_embed or nn.EmbeddingBag(
-            num_embeddings=N_VACANCY_ID,
-            embedding_dim=VACANCY_ID_EMBED_DIM,
-        )
         self.company_id = company_id or nn.EmbeddingBag(
             num_embeddings=N_COMPANY_ID,
             embedding_dim=COMPANY_ID_EMBED_DIM,
@@ -142,7 +136,6 @@ class EmbedSingleVac(nn.Module):
 
     def forward(self, x):
         x = torch.cat([
-            0 * self.vacancy_id_embed(x.unsqueeze(1)),
             self.company_id(self.description.company_id[x].unsqueeze(1)),
             self.area_id(self.description.area_id[x]),
             self.area_region_id(self.description.area_region_id[x]),
@@ -172,21 +165,15 @@ class EmbedMultipleVac(nn.Module):
             nn.Linear(out_features, out_features),
             nn.ReLU(),
         )
-    
+
     def __init__(
             self,
             description,
-            vacancy_id_embed=None,
             company_id=None,
         ):
         super().__init__()
 
         self.description = description
-
-        self.vacancy_id_embed = vacancy_id_embed or nn.EmbeddingBag(
-            num_embeddings=N_VACANCY_ID,
-            embedding_dim=VACANCY_ID_EMBED_DIM,
-        )
         self.company_id = company_id or nn.EmbeddingBag(
             num_embeddings=N_COMPANY_ID,
             embedding_dim=COMPANY_ID_EMBED_DIM,
@@ -232,7 +219,6 @@ class EmbedMultipleVac(nn.Module):
 
     def forward(self, x):
         x = torch.cat([
-            0 * self.vacancy_id_embed(x),
             self.company_id(self.description.company_id[x]),
             self.area_id(self.description.area_id[x]),
             self.area_region_id(self.description.area_region_id[x]),
@@ -269,14 +255,14 @@ class DSSM(li.LightningModule):
             lr=LEARNING_RATE,
             weight_decay=WEIGHT_DECAY,
         )
-    
+
     def training_step(self, batch, batch_idx):
         'Trains model on batch'
         self.train(True)
         x, y = batch
         batch_size = x.shape[0]
         logits = self.forward(x, y)
-        loss = self.criterion(logits, torch.eye(batch_size))
+        loss = 0.5 * (self.criterion(logits, torch.eye(batch_size)) + self.criterion(logits.T, torch.eye(batch_size)))
         self.log(
             'train_loss',
             loss.item(),
@@ -302,7 +288,7 @@ class DSSM(li.LightningModule):
         batch_size = x.shape[0]
         with torch.no_grad():
             logits = self.forward(x, y)
-            loss = self.criterion(logits, torch.eye(batch_size))
+            loss = 0.5 * (self.criterion(logits, torch.eye(batch_size)) + self.criterion(logits.T, torch.eye(batch_size)))
             self.log(
                 'val_loss',
                 loss.item(),
@@ -388,25 +374,9 @@ def train():
             ),
         ],
     )
-    # vacancy_id_embed = nn.EmbeddingBag(
-    #         num_embeddings=N_VACANCY_ID,
-    #         embedding_dim=VACANCY_ID_EMBED_DIM,
-    #     )
-    # company_id = nn.EmbeddingBag(
-    #     num_embeddings=N_COMPANY_ID,
-    #     embedding_dim=COMPANY_ID_EMBED_DIM,
-    # )
     dssm = DSSM(
-        embed_x=EmbedMultipleVac(
-            description=description,
-            # vacancy_id_embed=vacancy_id_embed,
-            # company_id=company_id,
-        ),
-        embed_y=EmbedSingleVac(
-            description=description,
-            # vacancy_id_embed=vacancy_id_embed,
-            # company_id=company_id,
-        ),
+        embed_x=EmbedMultipleVac(description=description),
+        embed_y=EmbedSingleVac(description=description),
     )
     datamodule = HeadHunterDataModule()
     trainer.fit(
@@ -430,15 +400,8 @@ def get_user_embeddings(dssm, users_df):
 
 
 def build_index(vacancy_embeddings):
-    # train = pl.read_parquet('data/dssm_train.pq')
-    # targets = np.array(train['target'].to_list() + train['vacancy_id'].explode().to_list())
-
-    # # Drop targets that had low occurency while training
-    # goodts = np.unique(targets)
-    
     goodts = np.arange(1, N_VACANCY_ID)
     p = hnswlib.Index(
-        # space='ip',
         space='cosine',
         dim=EMBED_DIM,
     )
@@ -449,34 +412,35 @@ def build_index(vacancy_embeddings):
 
 def get_predictions_by_index(p, user_embeddings, users_df):
     labels, distances = p.knn_query(user_embeddings, k=300)
-    labels = np.char.add(np.str_("v_"), (labels - 1).astype(str))
     return pl.DataFrame().with_columns(
         users_df['user_id'],
         dssm=labels,
         dssm_distances=distances,
+    ).explode(
+        'dssm_distances',
+        'dssm',
     ).select(
-        pl.col('dssm'),
+        pl.concat_str(pl.lit('v_'), pl.col('dssm').sub(1).cast(pl.String)).alias('dssm'),
         pl.col('dssm_distances'),
         pl.col('user_id').cast(pl.String),
+    ).group_by(
+        'user_id',
+    ).agg(
+        pl.col('dssm'),
+        pl.col('dssm_distances'),
     )
 
 
 @utils.timeit
 def get_predictions(path='data/user_application_features.pq'):
     description = VacancyDescription(path='data/vacancy_features.pq')
-    # dssm = DSSM(
-    #     embed_x=EmbedMultipleVac(description=description),
-    #     embed_y=EmbedSingleVac(description=description),
-    # )
     dssm = DSSM.load_from_checkpoint(
-        'data/epoch=60-step=44600.ckpt',
+        'data/epoch=78-step=57830.ckpt',
         embed_x=EmbedMultipleVac(description=description),
         embed_y=EmbedSingleVac(description=description),
     )
     dssm.train(False)
-    users_df = pl.read_parquet(path).group_by('user_id').agg(
-        pl.col('vacancy_id').first(),
-    )
+    users_df = pl.read_parquet(path)
     with torch.no_grad():
         return get_predictions_by_index(
             p=build_index(

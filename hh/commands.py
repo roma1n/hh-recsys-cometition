@@ -7,6 +7,7 @@ from hh import (
     descriptions,
     dssm,
     final,
+    fm,
     utils,
 )
 
@@ -52,7 +53,7 @@ class HeadHunter:
     def dssm_prediction(self):
         utils.save_pq(
             dssm.get_predictions(),
-            'data/dssm_cosine_prediction.pq'
+            'data/dssm_prediction.pq'
         )
 
     def dssm_test_prediction(self):
@@ -64,7 +65,7 @@ class HeadHunter:
 
     def train_dssm(self):
         dssm.train()
-    
+
     def final_train_dataset(self):
         utils.save_pq(
             final.get_dataset(),
@@ -83,14 +84,32 @@ class HeadHunter:
     def final_get_predictions(self):
         utils.save_pq(
             final.get_predictions(),
-            'data/catboost_predictions_v6.pq'
+            'data/catboost_predictions_v7.pq'
         )
 
     def shap(self):
         final.catboost_shap()
-        
+
     def calculate_descriptions(self):
         descriptions.calculate()
+
+    def fm_build(self):
+        fm.train()
+
+    def fm_build_training(self):
+        fm.train(training=True)
+
+    def fm_prediction(self):
+        utils.save_pq(
+            fm.get_predictions(),
+            'data/fm_prediction.pq'
+        )
+
+    def fm_train_prediction(self):
+        utils.save_pq(
+            fm.get_predictions(training=True),
+            'data/fm_training_prediction.pq'
+        )
 
 
 def main():

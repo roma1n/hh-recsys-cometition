@@ -29,6 +29,8 @@ float_features = list(map(lambda feature: f'eq_{feature}', eq_features)) + [
     'views_back',
     'score',
     'score_pos',
+    'fm_score',
+    'fm_score_pos',
     'sessions_back',
     'vacancy_actions',
     'vacancy_actions_last_day',
@@ -127,6 +129,16 @@ def get_dataset(training=True):
         'score',
         'score_pos',
     )
+    fm = pre_dataset.select(
+        pl.col('user_id'),
+        pl.col('fm').alias('vacancy_id'),
+        pl.col('fm_distances').alias('fm_score'),
+        pl.lit(list(range(300))).alias('fm_score_pos'),
+    ).explode(
+        'vacancy_id',
+        'fm_score',
+        'fm_score_pos',
+    )
     dataset = likes.join(
         applies,
         on=['user_id', 'vacancy_id'], 
@@ -137,6 +149,10 @@ def get_dataset(training=True):
         how='outer_coalesce',
     ).join(
         dssm,
+        on=['user_id', 'vacancy_id'], 
+        how='outer_coalesce',
+    ).join(
+        fm,
         on=['user_id', 'vacancy_id'], 
         how='outer_coalesce',
     ).select(
@@ -150,6 +166,8 @@ def get_dataset(training=True):
         pl.col(['views_back']).fill_null(1000),
         pl.col(['score']).fill_null(10),
         pl.col(['score_pos']).fill_null(1000),
+        pl.col(['fm_score']).fill_null(10),
+        pl.col(['fm_score_pos']).fill_null(1000),
     ).join(
         data.get_vacancies_no_desc(),
         on='vacancy_id',

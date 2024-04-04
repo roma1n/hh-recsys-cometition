@@ -86,6 +86,13 @@ def get_dssm(training=False):
 
 
 @utils.timeit
+def get_fm(training=False):
+    return pl.read_parquet(
+        'data/fm_training_prediction.pq' if training else 'data/fm_prediction.pq'
+    )
+
+
+@utils.timeit
 def get_application_candidates(training=False):
     log = data.get_log(training=training).explode(
         'action_dt',
@@ -121,6 +128,7 @@ def get_application_candidates(training=False):
         pl.col('dssm'),
         pl.col('dssm_distances'),
     )
+    fm = get_fm(training=training)
     needed = data.get_log(training=training) if training else data.get_test_hh()
     needed = needed.select(
         pl.col('user_id')
@@ -141,6 +149,10 @@ def get_application_candidates(training=False):
         dssm,
         on='user_id',
         how='left',
+    ).join(
+        fm,
+        on='user_id',
+        how='left',
     ).select(
         pl.col('user_id'),
         pl.col('likes').fill_null([]),
@@ -148,4 +160,6 @@ def get_application_candidates(training=False):
         pl.col('views').fill_null([]),
         pl.col('dssm').fill_null([]),
         pl.col('dssm_distances').fill_null([]),
+        pl.col('fm').fill_null([]),
+        pl.col('fm_distances').fill_null([]),
     )

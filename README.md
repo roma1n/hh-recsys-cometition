@@ -44,9 +44,26 @@ hh final_get_predictions
 
 ```bash
 hh dssm_test_prediction \
+    && hh fm_build_training \
+    && hh fm_train_prediction \
     && hh final_train_dataset \
     && hh final_train_catboost \
     && hh dssm_prediction \
+    && hh fm_build \
+    && hh fm_prediction \
+    && hh final_application_dataset \
+    && hh final_get_predictions
+```
+
+### factorization machine
+
+```bash
+hh fm_build_training \
+    && hh fm_train_prediction \
+    && hh fm_build \
+    && hh fm_prediction \
+    && hh final_train_dataset \
+    && hh final_train_catboost \
     && hh final_application_dataset \
     && hh final_get_predictions
 ```
